@@ -37,48 +37,33 @@ export function Studio() {
   const [selectedForCanvas, setSelectedForCanvas] = useState<string | null>(null);
 
   useEffect(() => {
-    let isActive = true;
-
     async function loadGenerations() {
       try {
         const response = await fetch("/api/generations", { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error("Gallery data could not be loaded.");
-        }
-
         const data = (await response.json()) as Generation[];
-        if (isActive) {
-          setGenerations(data);
-          setSelectedForCanvas((current) => current ?? data[0]?.id ?? null);
-        }
-      } catch (error) {
-        if (isActive) {
-          setSubmissionError(
-            error instanceof Error ? error.message : "Gallery data could not be loaded.",
-          );
-        }
+        setGenerations(data);
+        setSelectedForCanvas(data[0]?.id ?? null);
       } finally {
-        if (isActive) {
-          setIsLoadingGallery(false);
-        }
+        setIsLoadingGallery(false);
       }
     }
 
     void loadGenerations();
-
-    return () => {
-      isActive = false;
-    };
   }, []);
 
   const canvasGeneration = useMemo(
-    () => generations.find((generation) => generation.id === selectedForCanvas) ?? null,
+    () => generations.find((g) => g.id === selectedForCanvas) ?? null,
     [generations, selectedForCanvas],
   );
 
   async function handleGenerate(values: GenerationFormValues) {
-    setIsSubmitting(true);
+    if (values.prompt.trim().length < 4) {
+      setSubmissionError("Prompt must be at least 4 characters.");
+      return;
+    }
+
     setSubmissionError(null);
+    setIsSubmitting(true);
 
     const optimistic = buildOptimisticGeneration(values);
     setGenerations((current) => [optimistic, ...current]);
@@ -99,55 +84,15 @@ export function Studio() {
         body: JSON.stringify(payload),
       });
 
-      const data = (await response.json()) as Generation | { error: string };
-
-      if (!response.ok) {
-        if ("id" in data) {
-          const failedGeneration = data as Generation;
-          setGenerations((current) =>
-            current.map((generation) =>
-              generation.id === optimistic.id ? failedGeneration : generation,
-            ),
-          );
-          setSelectedForCanvas((current) =>
-            current === optimistic.id ? failedGeneration.id : current,
-          );
-          setSubmissionError(failedGeneration.errorMessage ?? "Generation failed.");
-          return;
-        }
-
-        const message = "error" in data ? data.error : "Generation failed.";
-        throw new Error(message);
-      }
+      const data = (await response.json()) as Generation;
 
       setGenerations((current) =>
-        current.map((generation) =>
-          generation.id === optimistic.id ? (data as Generation) : generation,
-        ),
+        current.map((g) => (g.id === optimistic.id ? data : g)),
       );
-      setSelectedForCanvas((current) => (current === optimistic.id ? (data as Generation).id : current));
-      setFormValues({
-        ...emptyGenerationForm,
-        prompt: values.prompt,
-        negativePrompt: values.negativePrompt,
-        aspectRatio: values.aspectRatio,
-        model: values.model,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Generation failed.";
-      setGenerations((current) =>
-        current.map((generation) =>
-          generation.id === optimistic.id
-            ? {
-                ...generation,
-                status: "failed",
-                errorMessage: message,
-                updatedAt: new Date().toISOString(),
-              }
-            : generation,
-        ),
-      );
-      setSubmissionError(message);
+
+      setSelectedForCanvas(data.id);
+    } catch {
+      setSubmissionError("Generation failed.");
     } finally {
       setIsSubmitting(false);
     }
@@ -161,54 +106,55 @@ export function Studio() {
       model: source.model,
       sourceGenerationId: source.id,
     });
+
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
-      <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-        <div className="card rounded-[2rem] p-6 sm:p-8">
-          <p className="pill bg-[var(--accent-soft)] text-[var(--accent-deep)]">Assignment Slice B</p>
-          <div className="mt-5 max-w-2xl">
-            <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
-              Prompt, rerun, and refine without losing the thread.
-            </h1>
-            <p className="mt-4 text-base leading-7 text-[var(--muted)] sm:text-lg">
-              ImageFlow is a minimal generative media studio focused on the hard parts the assignment
-              asks for: waiting states, a durable gallery model, tweak lineage, and graceful fallback
-              when the model or network does not cooperate.
-            </p>
-          </div>
+    <main className="min-h-screen bg-neutral-50 text-neutral-900">
+      <div className="mx-auto max-w-7xl px-6 py-12">
+        <header className="mx-auto max-w-3xl text-center">
+          <p className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-neutral-500">
+            Generative Media Studio
+          </p>
+          <h1 className="text-5xl font-semibold tracking-tight">
+            Create images from prompts.
+          </h1>
+          <p className="mt-4 text-lg text-neutral-600">
+            Generate, revisit, and tweak your AI creations.
+          </p>
+        </header>
 
-          <div className="mt-8">
-            <PromptForm
-              value={formValues}
-              onChange={setFormValues}
-              onSubmit={handleGenerate}
-              isSubmitting={isSubmitting}
-              error={submissionError}
-            />
-          </div>
-        </div>
+        <section className="mx-auto mt-10 max-w-4xl rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
+          <PromptForm
+            value={formValues}
+            onChange={setFormValues}
+            onSubmit={handleGenerate}
+            isSubmitting={isSubmitting}
+            error={submissionError}
+          />
+        </section>
 
-        <CanvasPreview
-          generation={canvasGeneration}
-          isBusy={Boolean(isSubmitting && selectedForCanvas?.startsWith("pending-"))}
-          onSelectLatest={() => {
-            if (generations.length > 0) {
-              setSelectedForCanvas(generations[0].id);
-            }
-          }}
-        />
-      </section>
+        <section className="mt-12 grid gap-10 lg:grid-cols-[1.6fr_1fr]">
+          <Gallery
+            generations={generations}
+            isLoading={isLoadingGallery}
+            selectedId={selectedForCanvas}
+            onSelect={setSelectedForCanvas}
+            onTweak={handleTweak}
+          />
 
-      <Gallery
-        generations={generations}
-        isLoading={isLoadingGallery}
-        selectedId={selectedForCanvas}
-        onSelect={setSelectedForCanvas}
-        onTweak={handleTweak}
-      />
+          <CanvasPreview
+            generation={canvasGeneration}
+            isBusy={isSubmitting}
+            onSelectLatest={() => {
+              if (generations.length > 0) {
+                setSelectedForCanvas(generations[0].id);
+              }
+            }}
+          />
+        </section>
+      </div>
     </main>
   );
 }
