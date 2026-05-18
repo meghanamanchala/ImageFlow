@@ -199,7 +199,7 @@ export function Studio({ initialRemixId = null }: StudioProps) {
       <div className="mx-auto max-w-6xl px-6 py-12 sm:py-16">
         <header className="mx-auto max-w-3xl text-center">
           <p className="mb-4 text-xs font-medium uppercase tracking-[0.26em] text-neutral-500">
-            Generative Media Studio
+            Image Flow Studio
           </p>
           <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
             Create images from prompts.
