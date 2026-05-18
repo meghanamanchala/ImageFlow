@@ -3,6 +3,11 @@ import path from "node:path";
 import { getSupabaseAdminClient } from "@/lib/supabase";
 import { CreateGenerationRecord, Generation, UpdateGenerationRecord } from "@/types/generation";
 
+// Indicates whether the server has fallen back to local JSON storage because Supabase
+// is unavailable or its schema does not match the expected columns. Exported so
+// the app can surface a non-intrusive banner in the UI.
+export let usingLocalFallback = false;
+
 const dataFilePath = path.join(process.cwd(), "data", "generations.json");
 
 async function ensureDataFile() {
@@ -35,16 +40,24 @@ export async function listGenerations() {
   const supabase = getSupabaseAdminClient();
 
   if (supabase) {
-    const { data, error } = await supabase
-      .from("generations")
-      .select("*")
-      .order("created_at", { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from("generations")
+        .select("*")
+        .order("created_at", { ascending: false });
 
-    if (error) {
-      throw new Error(error.message);
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      return data.map(mapSupabaseGeneration);
+    } catch (e) {
+      // If Supabase is misconfigured or the schema differs, fall back to local file storage.
+      if (!usingLocalFallback) {
+        console.error("Supabase list error, falling back to local storage:", e);
+      }
+      usingLocalFallback = true;
     }
-
-    return data.map(mapSupabaseGeneration);
   }
 
   return sortGenerations(await listLocalGenerations());
@@ -61,17 +74,15 @@ export async function createGeneration(input: CreateGenerationRecord) {
 
   const supabase = getSupabaseAdminClient();
   if (supabase) {
-    const { data, error } = await supabase
-      .from("generations")
-      .insert(mapGenerationToSupabase(record))
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(error.message);
+    try {
+      const data = await insertAdaptive(supabase, mapGenerationToSupabase(record));
+      return mapSupabaseGeneration(data);
+    } catch (e) {
+      if (!usingLocalFallback) {
+        console.error("Supabase insert error, falling back to local storage:", e);
+      }
+      usingLocalFallback = true;
     }
-
-    return mapSupabaseGeneration(data);
   }
 
   const generations = await listLocalGenerations();
@@ -84,18 +95,19 @@ export async function updateGeneration(id: string, input: UpdateGenerationRecord
   const updatedAt = new Date().toISOString();
 
   if (supabase) {
-    const { data, error } = await supabase
-      .from("generations")
-      .update(mapGenerationToSupabase({ ...input, updatedAt }))
-      .eq("id", id)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(error.message);
+    try {
+      const data = await updateAdaptive(
+        supabase,
+        id,
+        mapGenerationToSupabase({ ...input, updatedAt }),
+      );
+      return mapSupabaseGeneration(data);
+    } catch (e) {
+      if (!usingLocalFallback) {
+        console.error("Supabase update error, falling back to local storage:", e);
+      }
+      usingLocalFallback = true;
     }
-
-    return mapSupabaseGeneration(data);
   }
 
   const generations = await listLocalGenerations();
@@ -134,18 +146,81 @@ function mapGenerationToSupabase(
     updatedAt?: string;
   },
 ) {
-  return {
-    id: row.id,
-    prompt: row.prompt,
-    negative_prompt: row.negativePrompt,
-    aspect_ratio: row.aspectRatio,
-    provider: row.provider,
-    model: row.model,
-    status: row.status,
-    image_url: row.imageUrl,
-    created_at: row.createdAt,
-    updated_at: row.updatedAt,
-    source_generation_id: row.sourceGenerationId,
-    error_message: row.errorMessage,
-  };
+  const out: Record<string, unknown> = {};
+  if (row.id !== undefined) out.id = row.id;
+  if (row.prompt !== undefined) out.prompt = row.prompt;
+  if (row.negativePrompt !== undefined) out.negative_prompt = row.negativePrompt;
+  if (row.aspectRatio !== undefined) out.aspect_ratio = row.aspectRatio;
+  if (row.provider !== undefined) out.provider = row.provider;
+  if (row.model !== undefined) out.model = row.model;
+  if (row.status !== undefined) out.status = row.status;
+  // Only include image_url when it's not null/undefined to avoid NOT NULL constraint errors on some schemas
+  if (row.imageUrl !== undefined && row.imageUrl !== null) out.image_url = row.imageUrl;
+  if (row.createdAt !== undefined) out.created_at = row.createdAt;
+  if (row.updatedAt !== undefined) out.updated_at = row.updatedAt;
+  if (row.sourceGenerationId !== undefined && row.sourceGenerationId !== null)
+    out.source_generation_id = row.sourceGenerationId;
+  if (row.errorMessage !== undefined && row.errorMessage !== null) out.error_message = row.errorMessage;
+
+  return out;
+}
+
+function parseMissingColumn(errorMessage: string) {
+  const match = /Could not find the '([^']+)' column/.exec(errorMessage);
+  return match?.[1] ?? null;
+}
+
+async function insertAdaptive(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  payload: Record<string, unknown>,
+) {
+  const candidate = { ...payload };
+
+  for (let i = 0; i < 12; i += 1) {
+    const { data, error } = await supabase.from("generations").insert(candidate).select().single();
+    if (!error) {
+      return data;
+    }
+
+    const missing = parseMissingColumn(error.message);
+    if (missing && Object.prototype.hasOwnProperty.call(candidate, missing)) {
+      delete candidate[missing];
+      continue;
+    }
+
+    throw new Error(error.message);
+  }
+
+  throw new Error("Supabase insert failed after adaptive retries.");
+}
+
+async function updateAdaptive(
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  id: string,
+  payload: Record<string, unknown>,
+) {
+  const candidate = { ...payload };
+
+  for (let i = 0; i < 12; i += 1) {
+    const { data, error } = await supabase
+      .from("generations")
+      .update(candidate)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (!error) {
+      return data;
+    }
+
+    const missing = parseMissingColumn(error.message);
+    if (missing && Object.prototype.hasOwnProperty.call(candidate, missing)) {
+      delete candidate[missing];
+      continue;
+    }
+
+    throw new Error(error.message);
+  }
+
+  throw new Error("Supabase update failed after adaptive retries.");
 }

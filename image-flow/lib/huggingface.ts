@@ -31,28 +31,54 @@ export async function generateImage({
   }
 
   const { width, height } = modelDimensions[aspectRatio];
-  const response = await fetch(`https://api-inference.huggingface.co/models/${modelId}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      inputs: prompt,
-      parameters: {
-        negative_prompt: negativePrompt,
-        width,
-        height,
+  async function callModel(mId: string) {
+    return await fetch(`https://api-inference.huggingface.co/models/${mId}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
       },
-    }),
-    cache: "no-store",
-  });
+      body: JSON.stringify({
+        inputs: prompt,
+        parameters: {
+          negative_prompt: negativePrompt,
+          width,
+          height,
+        },
+      }),
+      cache: "no-store",
+    });
+  }
+  let response = await callModel(modelId);
+
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(
-      `Hugging Face returned ${response.status}. ${errorText || "No additional error details."}`,
-    );
+    // If the model was not found (404) try a safe fallback model (if different) before mocking.
+    if (response.status === 404) {
+      const fallback = process.env.HF_MODEL_ID && process.env.HF_MODEL_ID !== modelId
+        ? process.env.HF_MODEL_ID
+        : "stabilityai/stable-diffusion-xl-base-1.0";
+
+      if (fallback && fallback !== modelId) {
+        // try fallback model once
+        const tryResp = await callModel(fallback);
+        if (tryResp.ok) {
+          response = tryResp;
+        } else {
+          // if fallback fails, log and return mock
+          const tryText = await tryResp.text();
+          console.warn(`Hugging Face primary model 404 and fallback failed: ${tryResp.status} ${tryText}`);
+          return buildMockImage({ prompt, aspectRatio, model: fallback });
+        }
+      } else {
+        return buildMockImage({ prompt, aspectRatio, model: modelId });
+      }
+    } else {
+      throw new Error(
+        `Hugging Face returned ${response.status}. ${errorText || "No additional error details."}`,
+      );
+    }
   }
 
   const contentType = response.headers.get("content-type") ?? "image/png";

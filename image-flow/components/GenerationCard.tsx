@@ -1,6 +1,7 @@
 "use client";
 
-import { Generation, aspectRatioLabels, statusMeta } from "@/types/generation";
+import { Sparkles, Pencil } from "lucide-react";
+import { Generation, statusMeta } from "@/types/generation";
 
 type GenerationCardProps = {
   generation: Generation;
@@ -19,55 +20,61 @@ export function GenerationCard({
 
   return (
     <article
-      className={`overflow-hidden rounded-[1.6rem] border bg-white/75 transition ${
-        isSelected ? "border-[var(--accent)] shadow-accent" : "border-[var(--border)]"
+      className={`group overflow-hidden rounded-3xl border bg-white transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${
+        isSelected
+          ? "border-black shadow-xl"
+          : "border-neutral-200 hover:border-neutral-300"
       }`}
     >
-      <button type="button" onClick={onSelect} className="block w-full text-left">
-        <div className="relative aspect-[4/3] bg-[#efe7da]">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="block w-full text-left"
+      >
+        <div className="relative aspect-square overflow-hidden bg-neutral-100">
           {generation.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={generation.imageUrl}
               alt={generation.prompt}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
             />
           ) : (
-            <div className="flex h-full items-center justify-center bg-[linear-gradient(135deg,#f9dcc6,#efe7da)] px-6 text-center text-sm text-[var(--muted)]">
-              {generation.status === "failed"
-                ? generation.errorMessage ?? "Generation failed."
-                : "Waiting for the model response..."}
+            <div className="flex h-full items-center justify-center p-6 text-center text-sm text-neutral-500">
+              {generation.errorMessage || "Generating image..."}
             </div>
           )}
 
-          <span className={`pill absolute left-3 top-3 ${meta.className}`}>{meta.label}</span>
+          <div className="absolute left-4 top-4">
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-medium backdrop-blur ${meta.className}`}
+            >
+              {meta.label}
+            </span>
+          </div>
         </div>
       </button>
 
-      <div className="space-y-4 p-4">
+      <div className="space-y-4 p-5">
         <div>
-          <p className="line-clamp-3 text-sm leading-6 text-[var(--foreground)]">{generation.prompt}</p>
-          <p className="mt-2 text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
-            {generation.model} · {aspectRatioLabels[generation.aspectRatio]}
+          <p className="line-clamp-2 text-sm font-medium leading-6 text-neutral-900">
+            {generation.prompt}
           </p>
-        </div>
 
-        {generation.sourceGenerationId ? (
-          <div className="rounded-2xl bg-[var(--accent-soft)] px-3 py-2 text-xs font-medium text-[var(--accent-deep)]">
-            Tweaked from {generation.sourceGenerationId.slice(0, 8)}
+          <div className="mt-2 flex items-center gap-2 text-xs text-neutral-500">
+            <Sparkles size={12} />
+            <span>{generation.model}</span>
           </div>
-        ) : null}
-
-        <div className="flex items-center justify-between gap-3 text-xs text-[var(--muted)]">
-          <span>{new Date(generation.createdAt).toLocaleString()}</span>
-          <button
-            type="button"
-            onClick={onTweak}
-            className="rounded-full border border-[var(--border)] px-3 py-2 font-semibold text-[var(--foreground)] transition hover:border-[var(--accent)] hover:text-[var(--accent-deep)]"
-          >
-            Tweak
-          </button>
         </div>
+
+        <button
+          type="button"
+          onClick={onTweak}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white transition hover:bg-neutral-800"
+        >
+          <Pencil size={14} />
+          Remix Prompt
+        </button>
       </div>
     </article>
   );

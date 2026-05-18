@@ -5,12 +5,20 @@ import { createGenerationInputSchema } from "@/types/generation";
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const raw = await request.text();
+    let body: unknown;
+    try {
+      body = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return NextResponse.json({ error: `Invalid JSON body: ${String(e)}. Raw body: ${raw}` }, { status: 400 });
+    }
+
     const parsed = createGenerationInputSchema.safeParse(body);
 
     if (!parsed.success) {
+      const errors = parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('; ');
       return NextResponse.json(
-        { error: "Please provide a valid prompt and settings." },
+        { error: `Validation failed: ${errors}` },
         { status: 400 },
       );
     }
@@ -23,7 +31,7 @@ export async function POST(request: Request) {
       provider: "huggingface",
       model: input.model,
       status: "processing",
-      imageUrl: null,
+      imageUrl: "",
       sourceGenerationId: input.sourceGenerationId ?? null,
       errorMessage: null,
     });
@@ -44,18 +52,18 @@ export async function POST(request: Request) {
 
       return NextResponse.json(completed);
     } catch (error) {
+      const message = error instanceof Error ? error.message : "The model request failed unexpectedly.";
       const failed = await updateGeneration(draft.id, {
         status: "failed",
-        errorMessage:
-          error instanceof Error ? error.message : "The model request failed unexpectedly.",
+        errorMessage: message,
       });
 
-      return NextResponse.json(failed, { status: 502 });
+      // Return the failed generation record (200) so the frontend can render persisted failure state
+      // instead of treating it as a network/server error.
+      return NextResponse.json(failed);
     }
-  } catch {
-    return NextResponse.json(
-      { error: "The request body could not be parsed." },
-      { status: 400 },
-    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `Server error: ${msg}` }, { status: 500 });
   }
 }
