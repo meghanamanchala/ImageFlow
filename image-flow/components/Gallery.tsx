@@ -29,7 +29,7 @@ export function Gallery({
           </div>
 
           <p className="mt-1 text-sm text-neutral-500">
-            Your previous generations
+            Browse, select, remix, or open any result in the canvas page.
           </p>
         </div>
 
@@ -43,7 +43,7 @@ export function Gallery({
           {Array.from({ length: 6 }).map((_, index) => (
             <div
               key={index}
-              className="aspect-square animate-pulse rounded-3xl bg-neutral-100"
+              className="aspect-[0.82] animate-pulse rounded-[1.6rem] bg-neutral-100"
             />
           ))}
         </div>
@@ -52,7 +52,7 @@ export function Gallery({
           No generations yet.
         </div>
       ) : (
-        <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
           {generations.map((generation) => (
             <GenerationCard
               key={generation.id}
