@@ -1,14 +1,17 @@
 # ImageFlow Studio
 
-Minimal generative media web app for The Bombay AI Company FDE Assignment B.
+Minimal generative media web app for The Bombay AI Company FDE assignment.
 
-## What ships
+## What it does
 
-- Prompt-to-image generation through a Hugging Face API seam.
-- Durable gallery records with prompt, settings, timestamps, status, and tweak lineage.
-- Tweak flow that reuses a past generation as the starting point for a rerun.
-- Slow/failure UX: optimistic pending cards, persisted failed jobs, and a safe mock fallback when API keys are missing.
-- Bonus: a lightweight client-side text overlay canvas for quick edit exploration.
+- Generate images from a prompt with the Hugging Face Inference API
+- Persist generations with prompt, model, aspect ratio, timestamps, status, and remix lineage
+- Show a gallery of previous generations
+- Remix any previous generation into a new run
+- Open any generation in a dedicated canvas editor page
+- Add a simple text overlay and save the edited image
+- Fall back to local JSON storage if Supabase is unavailable
+- Fall back to a mocked generated image if `HF_API_TOKEN` is missing
 
 ## Stack
 
@@ -16,50 +19,91 @@ Minimal generative media web app for The Bombay AI Company FDE Assignment B.
 - TypeScript
 - Tailwind CSS v4
 - Hugging Face Inference API
-- Supabase SSR helpers plus a local JSON fallback for quick setup
+- Supabase SSR helpers
+- Local JSON fallback storage for quick local development
 
-## Local setup
+## Routes
 
-1. Install dependencies:
+- `/`  
+  Main studio page for prompt, gallery, remix, and opening canvas
+
+- `/canvas/[id]`  
+  Dedicated canvas editor for a specific generation
+
+- `/api/generate`  
+  Creates a generation record, calls Hugging Face, then updates the record to `succeeded` or `failed`
+
+- `/api/generations`  
+  Returns all saved generations
+
+- `/api/status`  
+  Returns whether the app is using local fallback storage
+
+## Environment variables
+
+Create `.env.local`:
+
+```env
+HF_API_TOKEN=
+HF_MODEL_ID=black-forest-labs/FLUX.1-schnell
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+```
+
+Notes:
+
+- If `HF_API_TOKEN` is missing, the app still works end to end using a mock image.
+- If Supabase is not configured or the schema does not match, the app falls back to `data/generations.json`.
+
+## Install and run
 
 ```bash
 npm install
-```
-
-2. Copy `.env.example` to `.env.local`.
-
-3. Optional: add a real Hugging Face token:
-
-```env
-HF_API_TOKEN=...
-HF_MODEL_ID=black-forest-labs/FLUX.1-schnell
-```
-
-4. Optional: add Supabase credentials for persistent database-backed storage:
-
-```env
-NEXT_PUBLIC_SUPABASE_URL=...
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
-SUPABASE_SERVICE_ROLE_KEY=...
-```
-
-5. Start the app:
-
-```bash
 npm run dev
 ```
 
-If `HF_API_TOKEN` is missing, the app still works end to end using a mocked generated image. This keeps the integration contract intact while removing cost/setup friction.
+Open `http://localhost:3000`
+
+## How generation works
+
+1. The client posts prompt/settings to `/api/generate`
+2. The server creates a `processing` generation record
+3. The server calls Hugging Face
+4. The generation is updated to:
+   - `succeeded` with an image
+   - `failed` with a saved error message
+5. The gallery shows the persisted result either way
+
+## Hugging Face behavior
+
+The app uses Hugging Face in [lib/huggingface.ts](./lib/huggingface.ts).
+
+- Primary model comes from `HF_MODEL_ID` or the selected model
+- If no token is present, it returns a mock image
+- If Hugging Face returns `404`, the app tries one fallback model once
+- Other Hugging Face errors are saved and shown as failed generations
+
+## Storage behavior
+
+The app uses one storage interface in [lib/generation-store.ts](./lib/generation-store.ts).
+
+- Preferred backend: Supabase
+- Fallback backend: `data/generations.json`
+
+This keeps the product working locally even if Supabase is not ready.
 
 ## Supabase table
+
+Suggested schema:
 
 ```sql
 create table if not exists generations (
   id uuid primary key,
   prompt text not null,
   negative_prompt text not null default '',
-  aspect_ratio text not null,
-  provider text not null,
+  aspect_ratio text,
+  provider text,
   model text not null,
   status text not null,
   image_url text,
@@ -70,27 +114,31 @@ create table if not exists generations (
 );
 ```
 
-## Product choices
+## Test flow
 
-- The gallery is modeled as a first-class history, not just cached image URLs. Each generation keeps enough metadata to rerun, debug, and later extend into video, variants, or collaborative history.
-- The `POST /api/generate` route first records a `processing` item, then updates it to `succeeded` or `failed`. That means slow jobs and failures become visible state instead of disappearing into transient client memory.
-- The data layer uses one interface with two backends:
-  - Supabase when env vars are present
-  - `data/generations.json` for zero-setup local development
+1. Start the app with `npm run dev`
+2. Generate an image without `HF_API_TOKEN`
+3. Confirm a mock image appears in the gallery
+4. Click `Remix` on an existing card
+5. Change the prompt and generate again
+6. Click `Canvas` on any card
+7. Add overlay text and save the image
 
-## Bonus: LoRA serving plan
+## How to test a failed Hugging Face run
 
-If I were taking the custom style system further, I would:
+1. Put an invalid token in `.env.local`
 
-1. Collect a small style dataset per user and store image references plus metadata in Supabase Storage.
-2. Launch offline LoRA fine-tunes through Fal.ai or a dedicated training job, keyed by `user_id` and `style_id`.
-3. Store LoRA metadata in Postgres: base model, trigger phrase, storage URL, training status, sample outputs, and cost.
-4. At generation time, resolve the selected style to a model + LoRA adapter pair and pass both into the inference provider.
-5. Cache hot LoRAs, expire cold ones, and preserve training lineage so users can version or roll back styles.
+```env
+HF_API_TOKEN=wrong-token
+```
 
-## Suggested demo flow
+2. Restart the dev server
+3. Generate a new image
+4. Confirm the new card shows a failed state
+5. Restore the real token after testing
 
-1. Generate an image with no API key and show the mocked fallback still creating a gallery item.
-2. Add a real `HF_API_TOKEN` and rerun to show the same UI against a live model.
-3. Click `Tweak` on a prior card, adjust the prompt, and regenerate.
-4. Open the canvas panel and add text overlay copy to the latest image.
+## Notes
+
+- Old gallery records can still show historic provider-specific error text if they were created before the current Hugging Face-only flow.
+- The canvas editor is not limited to the newest generation; it works for any selected generation.
+- Downloaded canvas files are named `imageflow-studio-<id>.png`.
