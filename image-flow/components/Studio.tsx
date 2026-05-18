@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CanvasPreview } from "@/components/CanvasPreview";
+import Link from "next/link";
+import { ArrowUpRight, ImageIcon } from "lucide-react";
 import { Gallery } from "@/components/Gallery";
 import { PromptForm } from "@/components/PromptForm";
 import {
@@ -28,33 +29,79 @@ function buildOptimisticGeneration(values: GenerationFormValues): Generation {
   };
 }
 
-export function Studio() {
+type StudioProps = {
+  initialRemixId?: string | null;
+};
+
+export function Studio({ initialRemixId = null }: StudioProps) {
   const [generations, setGenerations] = useState<Generation[]>([]);
   const [formValues, setFormValues] = useState<GenerationFormValues>(emptyGenerationForm);
   const [isLoadingGallery, setIsLoadingGallery] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [selectedForCanvas, setSelectedForCanvas] = useState<string | null>(null);
+  const [hasAppliedInitialRemix, setHasAppliedInitialRemix] = useState(false);
 
   useEffect(() => {
+    let isActive = true;
+
     async function loadGenerations() {
       try {
         const response = await fetch("/api/generations", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("Gallery data could not be loaded.");
+        }
+
         const data = (await response.json()) as Generation[];
-        setGenerations(data);
-        setSelectedForCanvas(data[0]?.id ?? null);
+        if (isActive) {
+          setGenerations(data);
+        }
+      } catch (error) {
+        if (isActive) {
+          setSubmissionError(
+            error instanceof Error ? error.message : "Gallery data could not be loaded.",
+          );
+        }
       } finally {
-        setIsLoadingGallery(false);
+        if (isActive) {
+          setIsLoadingGallery(false);
+        }
       }
     }
 
     void loadGenerations();
+
+    return () => {
+      isActive = false;
+    };
   }, []);
 
   const canvasGeneration = useMemo(
     () => generations.find((g) => g.id === selectedForCanvas) ?? null,
     [generations, selectedForCanvas],
   );
+
+  useEffect(() => {
+    if (!initialRemixId || generations.length === 0 || hasAppliedInitialRemix) {
+      return;
+    }
+
+    const source = generations.find((generation) => generation.id === initialRemixId);
+    if (!source) {
+      return;
+    }
+
+    setFormValues({
+      prompt: source.prompt,
+      negativePrompt: source.negativePrompt,
+      aspectRatio: source.aspectRatio,
+      model: source.model,
+      sourceGenerationId: source.id,
+    });
+    setSelectedForCanvas(source.id);
+    setHasAppliedInitialRemix(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [hasAppliedInitialRemix, initialRemixId, generations]);
 
   async function handleGenerate(values: GenerationFormValues) {
     if (values.prompt.trim().length < 4) {
@@ -84,15 +131,52 @@ export function Studio() {
         body: JSON.stringify(payload),
       });
 
-      const data = (await response.json()) as Generation;
+      const data = (await response.json()) as Generation | { error: string };
+
+      if (!response.ok) {
+        if ("id" in data) {
+          const failedGeneration = data as Generation;
+          setGenerations((current) =>
+            current.map((g) => (g.id === optimistic.id ? failedGeneration : g)),
+          );
+          setSelectedForCanvas(failedGeneration.id);
+          setSubmissionError(failedGeneration.errorMessage ?? "Generation failed.");
+          return;
+        }
+
+        throw new Error("error" in data ? data.error : "Generation failed.");
+      }
 
       setGenerations((current) =>
-        current.map((g) => (g.id === optimistic.id ? data : g)),
+        current.map((g) => (g.id === optimistic.id ? (data as Generation) : g)),
       );
 
-      setSelectedForCanvas(data.id);
-    } catch {
-      setSubmissionError("Generation failed.");
+      const completed = data as Generation;
+      setSelectedForCanvas(completed.id);
+      setFormValues({
+        ...emptyGenerationForm,
+        prompt: completed.prompt,
+        negativePrompt: completed.negativePrompt,
+        aspectRatio: completed.aspectRatio,
+        model: completed.model,
+        sourceGenerationId: null,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Generation failed.";
+
+      setGenerations((current) =>
+        current.map((g) =>
+          g.id === optimistic.id
+            ? {
+                ...g,
+                status: "failed",
+                errorMessage: message,
+                updatedAt: new Date().toISOString(),
+              }
+            : g,
+        ),
+      );
+      setSubmissionError(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -112,20 +196,20 @@ export function Studio() {
 
   return (
     <main className="min-h-screen bg-neutral-50 text-neutral-900">
-      <div className="mx-auto max-w-7xl px-6 py-12">
+      <div className="mx-auto max-w-6xl px-6 py-12 sm:py-16">
         <header className="mx-auto max-w-3xl text-center">
-          <p className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-neutral-500">
+          <p className="mb-4 text-xs font-medium uppercase tracking-[0.26em] text-neutral-500">
             Generative Media Studio
           </p>
-          <h1 className="text-5xl font-semibold tracking-tight">
+          <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
             Create images from prompts.
           </h1>
-          <p className="mt-4 text-lg text-neutral-600">
+          <p className="mt-3 text-base text-neutral-600 sm:text-lg">
             Generate, revisit, and tweak your AI creations.
           </p>
         </header>
 
-        <section className="mx-auto mt-10 max-w-4xl rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
+        <section className="mx-auto mt-10 max-w-4xl rounded-[2rem] border border-neutral-200 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] sm:p-6">
           <PromptForm
             value={formValues}
             onChange={setFormValues}
@@ -135,7 +219,7 @@ export function Studio() {
           />
         </section>
 
-        <section className="mt-12 grid gap-10 lg:grid-cols-[1.6fr_1fr]">
+        <section className="mt-12 grid gap-8 lg:grid-cols-[minmax(0,1.45fr)_22rem] lg:items-start">
           <Gallery
             generations={generations}
             isLoading={isLoadingGallery}
@@ -144,15 +228,64 @@ export function Studio() {
             onTweak={handleTweak}
           />
 
-          <CanvasPreview
-            generation={canvasGeneration}
-            isBusy={isSubmitting}
-            onSelectLatest={() => {
-              if (generations.length > 0) {
-                setSelectedForCanvas(generations[0].id);
-              }
-            }}
-          />
+          <aside className="rounded-[1.8rem] border border-neutral-200 bg-white p-5 shadow-sm lg:sticky lg:top-6">
+            <div className="mb-5 flex items-center gap-2">
+              <ImageIcon size={18} />
+              <div>
+                <h3 className="text-lg font-semibold">Canvas Editor</h3>
+                <p className="mt-1 text-sm text-neutral-500">
+                  Open the selected generation in a dedicated editing page.
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded-[1.6rem] border border-neutral-200 bg-neutral-100">
+              {canvasGeneration?.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={canvasGeneration.imageUrl}
+                  alt={canvasGeneration.prompt}
+                  className="aspect-[0.95] w-full object-cover"
+                />
+              ) : (
+                <div className="flex aspect-[0.95] items-center justify-center px-6 text-center text-sm text-neutral-500">
+                  {isSubmitting
+                    ? "The selected image is still generating."
+                    : "Select any gallery item to preview and open it in the canvas editor."}
+                </div>
+              )}
+            </div>
+
+            {canvasGeneration?.prompt ? (
+              <p className="mt-4 line-clamp-3 text-sm leading-6 text-neutral-600">
+                {canvasGeneration.prompt}
+              </p>
+            ) : null}
+
+            <div className="mt-5 flex flex-col gap-3">
+              <Link
+                href={canvasGeneration ? `/canvas/${canvasGeneration.id}` : "/"}
+                className={`inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-medium transition ${
+                  canvasGeneration
+                    ? "bg-black text-white hover:bg-neutral-800"
+                    : "cursor-not-allowed bg-neutral-200 text-neutral-400 pointer-events-none"
+                }`}
+              >
+                <ArrowUpRight size={15} />
+                Open canvas page
+              </Link>
+
+              {canvasGeneration ? (
+                <button
+                  type="button"
+                  onClick={() => handleTweak(canvasGeneration)}
+                  className="rounded-2xl border border-neutral-200 px-4 py-3 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
+                >
+                  Remix selected image
+                </button>
+              ) : null}
+            </div>
+          </aside>
         </section>
       </div>
     </main>

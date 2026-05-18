@@ -63,6 +63,11 @@ export async function listGenerations() {
   return sortGenerations(await listLocalGenerations());
 }
 
+export async function getGenerationById(id: string) {
+  const generations = await listGenerations();
+  return generations.find((generation) => generation.id === id) ?? null;
+}
+
 export async function createGeneration(input: CreateGenerationRecord) {
   const timestamp = new Date().toISOString();
   const record: Generation = {
