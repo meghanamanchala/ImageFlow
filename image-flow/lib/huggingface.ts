@@ -32,24 +32,36 @@ export async function generateImage({
 
   const { width, height } = modelDimensions[aspectRatio];
   async function callModel(mId: string) {
-    return await fetch(`https://api-inference.huggingface.co/models/${mId}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs: prompt,
-        parameters: {
-          negative_prompt: negativePrompt,
-          width,
-          height,
+    try {
+      return await fetch(`https://api-inference.huggingface.co/models/${mId}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
-      }),
-      cache: "no-store",
-    });
+        body: JSON.stringify({
+          inputs: prompt,
+          parameters: {
+            negative_prompt: negativePrompt,
+            width,
+            height,
+          },
+        }),
+        cache: "no-store",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to reach Hugging Face for ${mId}: ${message}`);
+    }
   }
-  let response = await callModel(modelId);
+  let response: Response;
+
+  try {
+    response = await callModel(modelId);
+  } catch (error) {
+    console.warn(error instanceof Error ? error.message : String(error));
+    return buildMockImage({ prompt, aspectRatio, model: modelId });
+  }
 
 
   if (!response.ok) {
